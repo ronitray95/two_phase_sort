@@ -2,10 +2,12 @@
 
 import os
 import sys
+import tempfile
 import tracemalloc
 import itertools
 from operator import itemgetter
 
+from heap import HeapNode
 
 columnSize = {}  # map of column names to size in bytes
 columnList = []  # only column names with relative position
@@ -15,6 +17,9 @@ inpFile = ''
 opFile = ''
 memory = 0
 sortOrder = ''
+tempFilePointers = []
+MAX_STRING = f'{chr(254)}'
+MIN_STRING = ''
 
 
 def check():
@@ -92,15 +97,47 @@ def main():
             l = 0
             print('Sorting temporary block:', fcount)
             data = multisorted(data, columnSort)
-            with open(f'temp{fcount}.txt', 'w') as newf:
-                for d in data:
-                    newf.write(' '.join(d))
-                    newf.write('\n')
+            tf = tempfile.NamedTemporaryFile(
+                mode='w+t', prefix='temp_', suffix=f'_{fcount}.txt', dir=os.getcwd(), delete=False)
+            # with open(f'temp{fcount}.txt', 'w') as newf:
+            for d in data:
+                tf.writelines(' '.join(d))
+                tf.writelines('\n')
+            tf.seek(0)
+            tempFilePointers.append(tf)
             data = []
-            print(f'Writing to file temp{fcount}.txt')
+            print(f'Writing to file {tf.name}.txt')
             fcount += 1
     print('Total temporary files generated:', fcount)
+    f.close()
     print('End of phase 1\n\n')
+
+    print('Starting phase 2. Merging files...')
+    buffer = []
+    op = open(opFile, 'w')
+
+    for tf in tempFilePointers:
+        # list of first string from all temp files with their pointers
+        buffer.append(HeapNode(tf.readline(), tf))
+
+    buildHeap(buffer)
+    while True:
+        node = buffer[0]
+        if node.data == MAX_STRING or node.data == MIN_STRING:
+            break
+        op.writelines(node.data)
+        new_line = node.filepointer.readline()
+        if not new_line:
+            new_line = MIN_STRING if sortOrder else MAX_STRING
+        buffer[0] = HeapNode(new_line, node.filepointer)
+        heapify(buffer, 0, len(buffer))
+    op.close()
+
+    print('Finished merging. Deleting temporary files')
+    for tf in tempFilePointers:
+        s = tf.name
+        os.remove(tf.name)
+        print(f'Deleted file {s}')
 
 
 def multisorted(seq, indices):
@@ -113,6 +150,92 @@ def multisorted(seq, indices):
     for key, group in itertools.groupby(partially_sorted_seq, key=itemgetter(indices[0])):
         result.extend(multisorted(group, indices[1:]))
     return result
+
+
+def aGreaterThanB(lstA, lstB):
+    new_list = []
+    begIndex = 0
+    for c in columnSize.keys():
+        nst = lstA[begIndex:begIndex + columnSize[c]]
+        new_list.append(nst)
+        begIndex += columnSize[c]+1
+    lstA = new_list
+
+    new_list = []
+    begIndex = 0
+    for c in columnSize.keys():
+        nst = lstB[begIndex:begIndex + columnSize[c]]
+        new_list.append(nst)
+        begIndex += columnSize[c]+1
+    lstB = new_list
+    new_list = []
+
+    for i in columnSort:
+        if lstA[i] == lstB[i]:
+            continue
+        if lstA[i] > lstB[i]:
+            return True
+        else:
+            return False
+    return True
+
+
+def aLesserThanB(lstA, lstB):
+    new_list = []
+    begIndex = 0
+    for c in columnSize.keys():
+        nst = lstA[begIndex:begIndex + columnSize[c]]
+        new_list.append(nst)
+        begIndex += columnSize[c]+1
+    lstA = new_list
+
+    new_list = []
+    begIndex = 0
+    for c in columnSize.keys():
+        nst = lstB[begIndex:begIndex + columnSize[c]]
+        new_list.append(nst)
+        begIndex += columnSize[c]+1
+    lstB = new_list
+    new_list = []
+
+    for i in columnSort:
+        if lstA[i] == lstB[i]:
+            continue
+        if lstA[i] < lstB[i]:
+            return True
+        else:
+            return False
+    return True
+
+
+def heapify(block, i, n):
+    left = 2 * i + 1
+    right = 2 * i + 2  # sortType=false for asc and true for desc
+    sortResult = left < n and (aGreaterThanB(block[left].data, block[i].data) if sortOrder else aLesserThanB(
+        block[left].data, block[i].data))
+
+    if left < n and sortResult:
+        smallest = left
+    else:
+        smallest = i
+
+    sortResult = right < n and (aGreaterThanB(block[right].data, block[smallest].data) if sortOrder else aLesserThanB(
+        block[right].data, block[smallest].data))
+
+    if right < n and sortResult:
+        smallest = right
+
+    if i != smallest:
+        (block[i], block[smallest]) = (block[smallest], block[i])
+        heapify(block, smallest, n)
+
+
+def buildHeap(arr):
+    l = len(arr)  # - 1
+    mid = int(l / 2)-1
+    while mid >= 0:
+        heapify(arr, mid, l)
+        mid -= 1
 
 
 if __name__ == '__main__':
