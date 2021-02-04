@@ -2,11 +2,8 @@
 #include <vector>
 #include <string>
 #include <iostream>
-#include <unordered_map>
 #include <algorithm>
 
-#include <sys/resource.h>
-#include <sys/time.h>
 #include <stdio.h>
 
 #include "heap.h"
@@ -18,11 +15,11 @@ vector<int> columnSizes;    // only column names with relative position
 vector<int> columnSort;     // indices of columns to be sorted on
 vector<int> columnPositions;
 int SINGLE_ROW_SIZE = 0;
+long long linesInFile = 0;
 string inpFile = "";
 string opFile = "";
 long long memory = 0;
 bool sortOrder = false; //false=asc,true=desc
-unordered_map<string, fstream> tempFilePointers;
 vector<FILE *> filePointers;
 string MAX_STRING = "";
 string MIN_STRING = "";
@@ -32,39 +29,30 @@ bool compareString(string s1, string s2)
     for (int i = 0; i < columnSort.size(); i++)
     {
         int pos = columnSort[i];
-        //cout<<pos<<endl;
-        //cout << s1.length() << " " << s2.length() << endl;
-        string a = s1.length() == 0 ? s1 : s1.substr(columnPositions[pos], columnPositions[pos] + columnSizes[pos]);
-        string b = s2.length() == 0 ? s2 : s2.substr(columnPositions[pos], columnPositions[pos] + columnSizes[pos]);
-        //cout<<s1<<"\n"<<s2<<"\n";
+        string a = s1.length() <= 1 ? s1 : s1.substr(columnPositions[pos], columnSizes[pos]);
+        string b = s2.length() <= 1 ? s2 : s2.substr(columnPositions[pos], columnSizes[pos]);
         if (a == b)
             continue;
         if (sortOrder)
-        { //descending order
             return b < a;
-        }
         else if (!sortOrder)
-        {
             return a < b;
-        }
     }
-    return true;
+    return false;
 }
 
 void heapify(HeapNode *block, int i, int n)
 {
     int left = 2 * i + 1;
     int right = 2 * i + 2; // sortType=false for asc and true for desc
-
     bool sortResult = left < n && compareString(block[left].data, block[i].data);
     int smallest;
-    if (left < n and sortResult)
+    if (left < n && sortResult)
         smallest = left;
     else
         smallest = i;
 
     sortResult = right < n && compareString(block[right].data, block[smallest].data);
-
     if (right < n && sortResult)
         smallest = right;
     if (i != smallest)
@@ -115,7 +103,7 @@ bool check(int argc, char **argv)
     }
     inpFile = string(argv[1]);
     opFile = string(argv[2]);
-    memory = stoi(argv[3]) * 1000 * 1000 * 0.8;
+    memory = stoi(argv[3]) * 1000 * 1000 * 0.6;
     string ss = string(argv[4]);
     transform(ss.begin(), ss.end(), ss.begin(), ::tolower);
     if (ss != "asc" and ss != "desc")
@@ -135,8 +123,6 @@ bool check(int argc, char **argv)
         }
         columnSort.push_back(a - columnNames.begin());
     }
-    // for (int i=0 ;i< columnSort.size();i++)
-    //     cout << columnSort[i] << " ";
     ifstream ip(inpFile);
     if (!ip)
     {
@@ -151,14 +137,25 @@ int main(int argc, char **argv)
 {
     if (!check(argc, argv))
         return -1;
-    int linestoRead = int(memory / SINGLE_ROW_SIZE);
+    FILE *fp;
+    fp = fopen(inpFile.c_str(), "r");
+    while (EOF != (fscanf(fp, "%*[^\n]"), fscanf(fp, "%*c")))
+        ++linesInFile;
+    printf("Total Lines in file : %lld\n", linesInFile);
+    if (memory * memory < linesInFile * SINGLE_ROW_SIZE)
+    {
+        printf("File is too big for 2 way merge sort. K way merge sort is needed.");
+        return -1;
+    }
+    long long linestoRead = memory / SINGLE_ROW_SIZE;
+    linestoRead = min(linesInFile, linestoRead);
     ifstream ip(inpFile);
     string line;
     getline(ip, line);
     int l = 0, fcount = 0;
     vector<string> data;
     data.reserve(linestoRead);
-    printf("Starting phase 1. Reading %d at a time...\n", linestoRead);
+    printf("Starting phase 1. Reading %lld at a time...\n", linestoRead);
     while (ip)
     {
         l++;
@@ -174,7 +171,6 @@ int main(int argc, char **argv)
             l = 0;
             fcount++;
             printf("Sorting temporary block: %d\n", fcount);
-            //PRINTDATA(data);
             sort(data.begin(), data.end(), compareString);
             printf("Sorted!\n");
             string fName = "temp_" + to_string(fcount) + ".txt";
@@ -183,7 +179,6 @@ int main(int argc, char **argv)
             for (string s : data)
                 out << s << "\n";
             out.close();
-            //ifstream i(fName);
             FILE *f = fopen(fName.c_str(), "r");
             filePointers.push_back(f);
             printf("Write done!\n");
@@ -205,7 +200,6 @@ int main(int argc, char **argv)
             out << s << "\n";
         out.close();
         FILE *f = fopen(fName.c_str(), "r");
-        //ifstream i(fName);
         filePointers.push_back(f);
         printf("Write done!\n");
     }
@@ -229,7 +223,6 @@ int main(int argc, char **argv)
         HeapNode node = buffer[0];
         if (node.data == MAX_STRING || node.data == MIN_STRING)
             break;
-        //cout << node.data << endl;
         op << node.data << "\n";
         char x[SINGLE_ROW_SIZE + 10];
         char *isNull = fgets(x, SINGLE_ROW_SIZE + 10, node.filePointer);
@@ -240,11 +233,8 @@ int main(int argc, char **argv)
         else
             new_line = string(x);
         buffer[0] = HeapNode(new_line, node.filePointer);
-        //printf("%s\n",x);
-        //cout << new_line << endl;
         heapify(buffer, 0, fcount);
     }
-    //free(buffer);
     op.close();
     printf("Finished merging. Deleting temporary files\n");
     for (int i = 0; i < fcount; i++)
