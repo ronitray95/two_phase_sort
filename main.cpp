@@ -3,6 +3,8 @@
 #include <string>
 #include <iostream>
 #include <algorithm>
+#include <thread>
+#include <mutex>
 
 #include <stdio.h>
 
@@ -15,14 +17,21 @@ vector<int> columnSizes;    // only column names with relative position
 vector<int> columnSort;     // indices of columns to be sorted on
 vector<int> columnPositions;
 int SINGLE_ROW_SIZE = 0;
+int LINE_LENGTH = 0;
 long long linesInFile = 0;
+volatile int fcount = 0;
 string inpFile = "";
 string opFile = "";
 long long memory = 0;
+int numThreads = 0;
+long long linestoRead = 0;
 bool sortOrder = false; //false=asc,true=desc
 vector<FILE *> filePointers;
 string MAX_STRING = "";
 string MIN_STRING = "";
+
+mutex lockFCount;
+vector<thread> threadArray;
 
 bool compareString(string s1, string s2)
 {
@@ -88,7 +97,9 @@ bool check(int argc, char **argv)
     {
         int i = x.find(",");
         columnPositions.push_back(pos);
-        columnNames.push_back(x.substr(0, i));
+        string ss = x.substr(0, i);
+        transform(ss.begin(), ss.end(), ss.begin(), ::tolower);
+        columnNames.push_back(ss);
         int r = stoi(x.substr(i + 1));
         SINGLE_ROW_SIZE += r;
         columnSizes.push_back(r);
@@ -104,7 +115,14 @@ bool check(int argc, char **argv)
     inpFile = string(argv[1]);
     opFile = string(argv[2]);
     memory = stoi(argv[3]) * 1000 * 1000 * 0.6;
-    string ss = string(argv[4]);
+    numThreads = atoi(argv[4]);
+    string ss = string(argv[numThreads == 0 ? 4 : 5]);
+    // char *p;
+    // long converted = strtol(argv[4], &p, 10);
+    // if (*p)
+    //     numThreads = 0;
+    // else
+    //     numThreads = (int)converted;
     transform(ss.begin(), ss.end(), ss.begin(), ::tolower);
     if (ss != "asc" and ss != "desc")
     {
@@ -112,9 +130,11 @@ bool check(int argc, char **argv)
         return false;
     }
     sortOrder = ss != "asc";
-    for (int i = 5; i < argc; i++)
+    int i = numThreads == 0 ? 5 : 6;
+    for (; i < argc; i++)
     {
         string c = argv[i];
+        transform(c.begin(), c.end(), c.begin(), ::tolower);
         auto a = find(columnNames.begin(), columnNames.end(), c);
         if (a == columnNames.end())
         {
@@ -133,32 +153,20 @@ bool check(int argc, char **argv)
     return true;
 }
 
-int main(int argc, char **argv)
+void phase1(long long start, long long lines)
 {
-    if (!check(argc, argv))
-        return -1;
-    FILE *fp;
-    fp = fopen(inpFile.c_str(), "r");
-    while (EOF != (fscanf(fp, "%*[^\n]"), fscanf(fp, "%*c")))
-        ++linesInFile;
-    printf("Total Lines in file : %lld\n", linesInFile);
-    if (memory * memory < linesInFile * SINGLE_ROW_SIZE)
-    {
-        printf("File is too big for 2 way merge sort. K way merge sort is needed.");
-        return -1;
-    }
-    long long linestoRead = memory / SINGLE_ROW_SIZE;
-    linestoRead = min(linesInFile, linestoRead);
     ifstream ip(inpFile);
+    ip.seekg(start * (LINE_LENGTH + 1), ios::beg);
     string line;
     getline(ip, line);
-    int l = 0, fcount = 0;
+    long long l = 0;
     vector<string> data;
     data.reserve(linestoRead);
     printf("Starting phase 1. Reading %lld at a time...\n", linestoRead);
-    while (ip)
+    while (ip && start <= lines)
     {
         l++;
+        start++;
         if (line.length() >= SINGLE_ROW_SIZE)
         {
             line.erase(remove(line.begin(), line.end(), '\n'), line.end());
@@ -166,21 +174,25 @@ int main(int argc, char **argv)
             data.push_back(line);
         }
         getline(ip, line);
-        if (l >= linestoRead)
+        if (l >= linestoRead + 3)
         {
             l = 0;
+            lockFCount.lock();
             fcount++;
             printf("Sorting temporary block: %d\n", fcount);
+            string fName = "temp_" + to_string(fcount) + ".txt";
+            lockFCount.unlock();
             sort(data.begin(), data.end(), compareString);
             printf("Sorted!\n");
-            string fName = "temp_" + to_string(fcount) + ".txt";
             ofstream out(fName);
             printf("Writing to file %s\n", fName.c_str());
             for (string s : data)
                 out << s << "\n";
             out.close();
             FILE *f = fopen(fName.c_str(), "r");
+            lockFCount.lock();
             filePointers.push_back(f);
+            lockFCount.unlock();
             printf("Write done!\n");
             data.clear();
         }
@@ -189,23 +201,29 @@ int main(int argc, char **argv)
     printf("Full input file read\n");
     if (data.size() != 0)
     {
+        lockFCount.lock();
         fcount++;
         printf("Sorting temporary block: %d\n", fcount);
+        string fName = "temp_" + to_string(fcount) + ".txt";
+        lockFCount.unlock();
         sort(data.begin(), data.end(), compareString);
         printf("Sorted!\n");
-        string fName = "temp_" + to_string(fcount) + ".txt";
         ofstream out(fName);
         printf("Writing to file %s\n", fName.c_str());
         for (string s : data)
             out << s << "\n";
         out.close();
         FILE *f = fopen(fName.c_str(), "r");
+        lockFCount.lock();
         filePointers.push_back(f);
+        lockFCount.unlock();
         printf("Write done!\n");
     }
     vector<string>().swap(data); //deallocate
-    printf("Total temporary files generated: %d\n", fcount);
-    printf("End of phase 1\nStarting phase 2. Merging files...\n");
+}
+
+void phase2()
+{
     HeapNode buffer[fcount];
     ofstream op(opFile);
     for (int i = 0; i < fcount; i++)
@@ -246,4 +264,52 @@ int main(int argc, char **argv)
         else
             printf("Failed to delete temp file temp_%d.txt\n", i + 1);
     }
+}
+
+int main(int argc, char **argv)
+{
+    if (!check(argc, argv))
+        return -1;
+    FILE *fp;
+    fp = fopen(inpFile.c_str(), "r");
+    while (EOF != (fscanf(fp, "%*[^\n]"), fscanf(fp, "%*c")))
+        ++linesInFile;
+    printf("Total Lines in file : %lld\n", linesInFile);
+    ifstream ip(inpFile);
+    string tt;
+    getline(ip, tt);
+    ip.close();
+    LINE_LENGTH = tt.length();
+    if (memory * memory < linesInFile * SINGLE_ROW_SIZE)
+    {
+        printf("File is too big for 2 way merge sort. K way merge sort is needed.");
+        return -1;
+    }
+    linestoRead = memory / SINGLE_ROW_SIZE;
+    linestoRead = min(linesInFile, linestoRead);
+    if (numThreads != 0)
+        linestoRead /= numThreads;
+    if (numThreads == 0)
+        phase1(0, linestoRead);
+    else
+    {
+        long long remLines = linesInFile;
+        long long start = 0, end = linesInFile / numThreads;
+        for (int i = 1; i <= numThreads; i++)
+        {
+            threadArray.emplace_back(thread(phase1, start, end));
+            //ttt.detach();
+            start = end + 1;
+            end += linesInFile / numThreads;
+            remLines -= linesInFile / numThreads;
+        }
+        if (remLines > 0)
+            threadArray.emplace_back(thread(phase1, start, end));
+    }
+    for (auto &th : threadArray)
+        th.join();
+    printf("Total temporary files generated: %d\n", fcount);
+    printf("End of phase 1\nStarting phase 2. Merging files...\n");
+    //return 2;
+    phase2();
 }
