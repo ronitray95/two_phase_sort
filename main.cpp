@@ -114,7 +114,7 @@ bool check(int argc, char **argv)
     }
     inpFile = string(argv[1]);
     opFile = string(argv[2]);
-    memory = stoi(argv[3]) * 1000 * 1000 * 0.6;
+    memory = stoi(argv[3]) * 1000 * 1000 * 0.55;
     numThreads = atoi(argv[4]);
     string ss = string(argv[numThreads == 0 ? 4 : 5]);
     // char *p;
@@ -162,7 +162,6 @@ void phase1(long long start, long long lines)
     long long l = 0;
     vector<string> data;
     data.reserve(linestoRead);
-    printf("Starting phase 1. Reading %lld at a time...\n", linestoRead);
     while (ip && start <= lines)
     {
         l++;
@@ -289,8 +288,9 @@ int main(int argc, char **argv)
     linestoRead = min(linesInFile, linestoRead);
     if (numThreads != 0)
         linestoRead /= numThreads;
+    printf("Starting phase 1. Reading %lld at a time...\n", linestoRead);
     if (numThreads == 0)
-        phase1(0, linestoRead);
+        phase1(0, linesInFile);
     else
     {
         long long remLines = linesInFile;
